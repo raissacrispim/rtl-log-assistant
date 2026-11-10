@@ -110,6 +110,12 @@ Opções:
   projeto AES, todos passando.
 - [`examples/relatorio_falhas.md`](examples/relatorio_falhas.md): logs com erro
   de sintaxe, falha de simulação, simulação interrompida e violações de lint.
+- [`examples/diagnostico_ia.md`](examples/diagnostico_ia.md): os mesmos logs de
+  falha com o diagnóstico gerado pelo Gemini (`--ai --provider gemini`).
+  O modelo acertou os quatro problemas, com arquivo e linha, e separou o aviso
+  da ferramenta dos problemas do design. As imprecisões aparecem onde o resumo
+  não tinha o dado: ele atribuiu uma linha errada ao `Exit Code` do SpyGlass e
+  deu causas genéricas para o lint, cujo log não detalha as regras violadas.
 
 Os logs em `examples/logs/` são reais. Os de `tests/fixtures/` são sintéticos,
 escritos no formato do VCS e do SpyGlass para testar os casos de falha.
