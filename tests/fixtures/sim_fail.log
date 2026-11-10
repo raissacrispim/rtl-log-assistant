@@ -1,0 +1,13 @@
+Chronologic VCS simulator copyright 1991-2025
+Contains Synopsys proprietary information.
+Compiler version X-2025.06-SP2_Full64; Runtime version X-2025.06-SP2_Full64;  Nov  4 14:52 2026
+=== minisoc_aes_sbox_tb ===
+Error: "tb/minisoc_aes_sbox_tb.sv", 57: minisoc_aes_sbox_tb: at time 12000 ps
+S-box: entrada 8'h53 -> obtido 8'h00, esperado 8'hed
+Error: "tb/minisoc_aes_sbox_tb.sv", 57: minisoc_aes_sbox_tb: at time 13000 ps
+S-box: entrada 8'h54 -> obtido 8'h00, esperado 8'h20
+Fatal: "tb/minisoc_aes_sbox_tb.sv", 76: minisoc_aes_sbox_tb: at time 258000 ps
+FAIL: 2 de 514 verificacoes falharam
+$finish called from file "tb/minisoc_aes_sbox_tb.sv", line 76.
+           V C S   S i m u l a t i o n   R e p o r t 
+Time: 258000 ps

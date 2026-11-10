@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rtl-log-assistant"
+version = "0.1.0"
+description = "Resume logs de lint (SpyGlass) e simulação (VCS) e gera diagnóstico com Claude"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Raissa Crispim" }]
+dependencies = ["anthropic>=2.8"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+rtl-log-assistant = "rtl_log_assistant.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,17 @@
+                         Chronologic VCS (TM)
+       Version X-2025.06-SP2_Full64 -- Wed Nov  4 14:52:09 2026
+
+Parsing design file 'rtl/minisoc_aes/minisoc_aes_sbox.sv'
+Parsing design file 'rtl/minisoc_aes/minisoc_aes_mix_columns.sv'
+
+Error-[SE] Syntax error
+  Following verilog source has syntax error :
+  "rtl/minisoc_aes/minisoc_aes_mix_columns.sv", 42: token is 'endmodule'
+  endmodule
+
+Warning-[TFIPC] Too few instance port connections
+rtl/minisoc_aes/minisoc_aes_sub_bytes.sv, 18
+  The above instance has fewer port connections than the module definition.
+
+1 error
+CPU time: .210 seconds to compile

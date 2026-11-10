@@ -1,0 +1,11 @@
+Chronologic VCS simulator copyright 1991-2025
+Contains Synopsys proprietary information.
+Compiler version X-2025.06-SP2_Full64; Runtime version X-2025.06-SP2_Full64;  Nov  4 14:52 2026
+=== minisoc_aes_sub_shift_tb ===
+PASS: SubBytes, ShiftRows e inversas nos vetores da FIPS-197 (20 verificacoes)
+$finish called from file "tb/minisoc_aes_sub_shift_tb.sv", line 93.
+$finish at simulation time                 6000
+           V C S   S i m u l a t i o n   R e p o r t 
+Time: 6000 ps
+CPU Time:      0.370 seconds;       Data structure size:   0.0Mb
+Wed Nov  4 14:52:08 2026

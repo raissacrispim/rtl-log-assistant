@@ -1,0 +1,11 @@
+Chronologic VCS simulator copyright 1991-2025
+Contains Synopsys proprietary information.
+Compiler version X-2025.06-SP2_Full64; Runtime version X-2025.06-SP2_Full64;  Nov  4 14:52 2026
+=== minisoc_aes_round_tb ===
+PASS: MixColumns, InvMixColumns, AddRoundKey e cifra completa nos vetores da FIPS-197 (21 verificacoes)
+$finish called from file "tb/minisoc_aes_round_tb.sv", line 183.
+$finish at simulation time               177000
+           V C S   S i m u l a t i o n   R e p o r t 
+Time: 177000 ps
+CPU Time:      0.350 seconds;       Data structure size:   0.0Mb
+Wed Nov  4 14:52:11 2026

@@ -1,0 +1,10 @@
+                        SpyGlass Predictive Analyzer (R)
+current_goal: info: loading goal `lint/lint_rtl' with top `minisoc_aes_shift_rows' (in progress)
+Checking Rule W415 (Rule 1 of total 292) .... done (Time = 0.00s, Memory = 0.0K)
+Results Summary:
+   Total              :      2 error,      3 warning,      1 information messages
+WARNING [38]    POLICY_DEPRECATED: Policies lint have been deprecated.
+SpyGlass Exit Code 2 (Rule-checking completed with errors)
+   Goal Violation Summary:
+       Waived   Messages:                      0 Errors,      0 Warnings,      0 Infos
+       Reported Messages:         0 Fatals,    2 Errors,      3 Warnings,      1 Infos
