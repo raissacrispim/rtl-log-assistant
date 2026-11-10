@@ -6,10 +6,15 @@ import argparse
 import sys
 from pathlib import Path
 
-import anthropic
-
 from . import __version__
-from .llm import DEFAULT_EFFORT, DEFAULT_MODEL, DiagnosisError, diagnose
+from .llm import (
+    DEFAULT_EFFORT,
+    DEFAULT_MODELS,
+    DEFAULT_PROVIDER,
+    PROVIDERS,
+    DiagnosisError,
+    diagnose,
+)
 from .parsers import STATUS_FAIL, parse_file
 from .report import digests_to_json, overall_status, render_markdown
 
@@ -30,22 +35,33 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="rtl-log-assistant",
         description="Resume logs de lint (SpyGlass) e simulação (VCS) e, "
-        "opcionalmente, gera um diagnóstico com Claude.",
+        "opcionalmente, gera um diagnóstico com LLM (Claude ou Gemini).",
     )
     ap.add_argument("paths", nargs="+", help="arquivos .log ou pastas com logs")
     ap.add_argument(
         "--ai",
         action="store_true",
-        help="adiciona diagnóstico do Claude (precisa de credencial da API da Anthropic)",
+        help="adiciona diagnóstico gerado por LLM (precisa de chave do provedor)",
+    )
+    ap.add_argument(
+        "--provider",
+        default=DEFAULT_PROVIDER,
+        choices=PROVIDERS,
+        help=f"provedor do LLM (padrão: {DEFAULT_PROVIDER}; gemini tem plano gratuito)",
     )
     ap.add_argument("--json", action="store_true", help="imprime o resumo estruturado em JSON")
     ap.add_argument("-o", "--output", help="salva o relatório neste arquivo")
-    ap.add_argument("--model", default=DEFAULT_MODEL, help=f"modelo (padrão: {DEFAULT_MODEL})")
+    ap.add_argument(
+        "--model",
+        help="modelo (padrão: "
+        + ", ".join(f"{p}: {m}" for p, m in DEFAULT_MODELS.items())
+        + ")",
+    )
     ap.add_argument(
         "--effort",
         default=DEFAULT_EFFORT,
         choices=["low", "medium", "high", "xhigh", "max"],
-        help=f"esforço de raciocínio do modelo (padrão: {DEFAULT_EFFORT})",
+        help=f"esforço de raciocínio, só para Claude (padrão: {DEFAULT_EFFORT})",
     )
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return ap
@@ -70,25 +86,13 @@ def main(argv: list[str] | None = None) -> int:
     else:
         output = render_markdown(digests)
         if args.ai:
+            title = "Claude" if args.provider == "claude" else "Gemini"
             try:
-                output += "\n## Diagnóstico (Claude)\n\n" + diagnose(
-                    digests, model=args.model, effort=args.effort
+                output += f"\n## Diagnóstico ({title})\n\n" + diagnose(
+                    digests, provider=args.provider, model=args.model, effort=args.effort
                 )
             except DiagnosisError as e:
                 print(f"erro: {e}", file=sys.stderr)
-                return 3
-            except anthropic.AuthenticationError:
-                print(
-                    "erro: credencial da Anthropic inválida ou ausente "
-                    "(defina ANTHROPIC_API_KEY).",
-                    file=sys.stderr,
-                )
-                return 3
-            except anthropic.APIConnectionError:
-                print("erro: sem conexão com a API da Anthropic.", file=sys.stderr)
-                return 3
-            except anthropic.APIStatusError as e:
-                print(f"erro da API ({e.status_code}): {e.message}", file=sys.stderr)
                 return 3
 
     if args.output:

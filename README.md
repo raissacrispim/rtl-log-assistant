@@ -2,8 +2,8 @@
 
 Ferramenta de linha de comando que lê os logs do fluxo RTL (lint com
 **SpyGlass**, compilação e simulação com **VCS**), resume o que importa e,
-opcionalmente, pede ao **Claude** um diagnóstico em português, com a causa
-provável e os próximos passos.
+opcionalmente, pede a um LLM (**Claude** ou **Gemini**) um diagnóstico em
+português, com a causa provável e os próximos passos.
 
 Nasceu do meu projeto de um acelerador AES-128 com interface SPI
 ([aes-spi-crypto-accelerator](https://github.com/raissacrispim/aes-spi-crypto-accelerator)).
@@ -18,7 +18,8 @@ logs (.log) ──► parsers determinísticos ──► resumo estruturado (JSO
                                                    │
                                    ┌───────────────┴───────────────┐
                                    ▼                               ▼
-                       relatório Markdown (sem IA)      diagnóstico com Claude (--ai)
+                       relatório Markdown (sem IA)     diagnóstico com LLM (--ai)
+                                                       Claude ou Gemini
 ```
 
 1. **Parsers** (`parsers.py`) reconhecem a ferramenta e extraem só os fatos:
@@ -28,9 +29,10 @@ logs (.log) ──► parsers determinísticos ──► resumo estruturado (JSO
 2. **Relatório** (`report.py`) monta uma tabela com o status de cada etapa e
    separa os problemas do design dos avisos do ambiente da ferramenta, como a
    depreciação de políticas do SpyGlass.
-3. **Diagnóstico** (`llm.py`) envia **só o resumo**, nunca o log bruto, para a
-   API do Claude, com instruções para responder com base nos dados e dizer
-   quando algo não pode ser concluído.
+3. **Diagnóstico** (`llm.py`) envia **só o resumo**, nunca o log bruto, para o
+   Claude ou para o Gemini, com instruções para responder com base nos dados e
+   dizer quando algo não pode ser concluído. O prompt é o mesmo nos dois
+   provedores; só a chamada à API muda.
 
 ### Decisões de projeto
 
@@ -43,6 +45,8 @@ logs (.log) ──► parsers determinísticos ──► resumo estruturado (JSO
 - **`unknown` não é sucesso.** Uma simulação sem linha `PASS` (por exemplo,
   interrompida antes do `$finish`) aparece como "não dá para concluir", e não
   como aprovada.
+- **Provedor trocável.** O mesmo prompt e o mesmo resumo funcionam com Claude
+  ou Gemini (`--provider`). O Gemini tem plano gratuito, bom para testar.
 - **Útil em CI.** O comando sai com código `1` se alguma etapa falhou, então
   pode entrar num `Makefile` ou num workflow.
 
@@ -54,8 +58,11 @@ Requer Python 3.10+.
 git clone https://github.com/raissacrispim/rtl-log-assistant.git
 cd rtl-log-assistant
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev]"      # inclui o SDK do Gemini e o pytest
 ```
+
+Para uso sem os testes: `pip install -e .` (só Claude) ou
+`pip install -e ".[gemini]"` (Claude e Gemini).
 
 ## Uso
 
@@ -63,17 +70,25 @@ pip install -e ".[dev]"
 rtl-log-assistant examples/logs                    # relatório Markdown no terminal
 rtl-log-assistant examples/logs -o relatorio.md    # salva em arquivo
 rtl-log-assistant tests/fixtures --json            # resumo estruturado
-rtl-log-assistant tests/fixtures --ai              # + diagnóstico do Claude
+rtl-log-assistant tests/fixtures --ai --provider gemini   # + diagnóstico do Gemini
+rtl-log-assistant tests/fixtures --ai                     # + diagnóstico do Claude
 ```
 
-Para o `--ai`, configure uma chave da API da Anthropic:
+O `--ai` precisa da chave do provedor escolhido:
+
+| Provedor | Variável | Onde criar a chave | Custo |
+|---|---|---|---|
+| Gemini | `GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com) → *Get API key* | plano gratuito com limite de pedidos |
+| Claude | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) → *API Keys* | pago por uso (centavos por execução) |
 
 ```bash
-export ANTHROPIC_API_KEY=...
+export GEMINI_API_KEY=...
 ```
 
-Opções: `--model` (padrão `claude-opus-5-5`) e `--effort`
-(`low`/`medium`/`high`/`xhigh`/`max`, padrão `medium`).
+Nunca coloque a chave em arquivos do projeto nem faça commit dela.
+
+Opções: `--model` (padrões `claude-opus-5-5` e `gemini-flash-latest`) e
+`--effort` (`low`/`medium`/`high`/`xhigh`/`max`, padrão `medium`, só para Claude).
 
 | Código de saída | Significado |
 |:-:|---|
@@ -98,9 +113,10 @@ escritos no formato do VCS e do SpyGlass para testar os casos de falha.
 pytest -q
 ```
 
-São 31 testes. Eles cobrem os logs reais, os casos de falha, o relatório, a
-CLI e a integração com o Claude. A chamada à API é substituída por um cliente
-falso, então os testes rodam sem chave e sem custo. O GitHub Actions roda tudo
+São 39 testes. Eles cobrem os logs reais, os casos de falha, o relatório, a
+CLI e a integração com Claude e Gemini, incluindo bloqueios, respostas
+cortadas e o limite do plano gratuito. As chamadas às APIs são substituídas
+por clientes falsos, então os testes rodam sem chave e sem custo. O GitHub Actions roda tudo
 em Python 3.10 e 3.13 a cada push.
 
 ## Limitações e próximos passos

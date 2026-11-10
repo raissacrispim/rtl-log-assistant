@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from rtl_log_assistant.cli import main
-from rtl_log_assistant.llm import DEFAULT_MODEL, DiagnosisError, diagnose
+from rtl_log_assistant.llm import DEFAULT_MODELS, SYSTEM_PROMPT, DiagnosisError, diagnose
 from rtl_log_assistant.parsers import parse_file
 from rtl_log_assistant.report import overall_status, render_markdown
 
@@ -88,7 +88,7 @@ def test_diagnose_sends_digest_not_raw_log():
 
     assert text == "## Status geral\nFalhou.\n"
     (call,) = client.calls
-    assert call["model"] == DEFAULT_MODEL
+    assert call["model"] == DEFAULT_MODELS["claude"]
     assert call["fallbacks"] == "default"
     assert call["output_config"] == {"effort": "medium"}
     content = call["messages"][0]["content"]
@@ -115,3 +115,84 @@ def test_diagnose_without_credentials_gives_clear_error():
 
     with pytest.raises(DiagnosisError, match="ANTHROPIC_API_KEY"):
         diagnose([parse_file(FIXTURES / "sim_fail.log")], client=NoAuthClient())
+
+
+# ------------------------ Gemini (cliente falso) --------------------------- #
+
+
+class FakeGeminiClient:
+    """Imita client.models.generate_content do SDK google-genai."""
+
+    def __init__(self, text="Tudo certo.", finish="STOP", block_reason=None, error=None):
+        from google.genai import types
+
+        self.calls = []
+        self._error = error
+        self._response = SimpleNamespace(
+            text=text,
+            prompt_feedback=SimpleNamespace(block_reason=block_reason),
+            candidates=[SimpleNamespace(finish_reason=types.FinishReason[finish])],
+        )
+        self.models = SimpleNamespace(generate_content=self._generate)
+
+    def _generate(self, **kwargs):
+        self.calls.append(kwargs)
+        if self._error:
+            raise self._error
+        return self._response
+
+
+def test_gemini_request_uses_same_prompt_and_digest():
+    client = FakeGeminiClient("## Status geral\nFalhou.")
+    digests = [parse_file(p) for p in FIXTURES.glob("*.log")]
+    text = diagnose(digests, provider="gemini", client=client)
+
+    assert text == "## Status geral\nFalhou.\n"
+    (call,) = client.calls
+    assert call["model"] == DEFAULT_MODELS["gemini"]
+    assert call["config"].system_instruction == SYSTEM_PROMPT
+    assert "FAIL: 2 de 514 verificacoes falharam" in call["contents"]
+    assert "Checking Rule" not in call["contents"]
+
+
+def test_gemini_custom_model():
+    client = FakeGeminiClient()
+    diagnose([parse_file(FIXTURES / "sim_fail.log")], provider="gemini", model="outro", client=client)
+    assert client.calls[0]["model"] == "outro"
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"finish": "SAFETY"}, {"block_reason": "OTHER"}, {"text": None}]
+)
+def test_gemini_blocked_or_empty_raises(kwargs):
+    with pytest.raises(DiagnosisError):
+        diagnose(
+            [parse_file(FIXTURES / "sim_fail.log")],
+            provider="gemini",
+            client=FakeGeminiClient(**kwargs),
+        )
+
+
+def test_gemini_truncated_output():
+    client = FakeGeminiClient("Parcial", finish="MAX_TOKENS")
+    text = diagnose([parse_file(FIXTURES / "sim_fail.log")], provider="gemini", client=client)
+    assert "limite de tokens" in text
+
+
+def test_gemini_rate_limit_message():
+    from google.genai import errors
+
+    err = errors.ClientError(429, {"error": {"message": "Quota exceeded", "status": "RESOURCE_EXHAUSTED"}})
+    with pytest.raises(DiagnosisError, match="plano gratuito"):
+        diagnose(
+            [parse_file(FIXTURES / "sim_fail.log")],
+            provider="gemini",
+            client=FakeGeminiClient(error=err),
+        )
+
+
+def test_cli_gemini_without_key(monkeypatch, capsys):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    assert main([str(FIXTURES / "sim_fail.log"), "--ai", "--provider", "gemini"]) == 3
+    assert "aistudio.google.com" in capsys.readouterr().err
