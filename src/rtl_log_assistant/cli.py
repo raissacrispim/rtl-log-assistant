@@ -14,6 +14,7 @@ from .llm import (
     PROVIDERS,
     DiagnosisError,
     diagnose,
+    list_gemini_models,
 )
 from .parsers import STATUS_FAIL, parse_file
 from .report import digests_to_json, overall_status, render_markdown
@@ -37,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Resume logs de lint (SpyGlass) e simulação (VCS) e, "
         "opcionalmente, gera um diagnóstico com LLM (Claude ou Gemini).",
     )
-    ap.add_argument("paths", nargs="+", help="arquivos .log ou pastas com logs")
+    ap.add_argument("paths", nargs="*", help="arquivos .log ou pastas com logs")
     ap.add_argument(
         "--ai",
         action="store_true",
@@ -63,12 +64,28 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["low", "medium", "high", "xhigh", "max"],
         help=f"esforço de raciocínio, só para Claude (padrão: {DEFAULT_EFFORT})",
     )
+    ap.add_argument(
+        "--list-models",
+        action="store_true",
+        help="lista os modelos do Gemini disponíveis para a sua chave e sai",
+    )
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return ap
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.list_models:
+        try:
+            print("\n".join(list_gemini_models()))
+        except DiagnosisError as e:
+            print(f"erro: {e}", file=sys.stderr)
+            return 3
+        return 0
+    if not args.paths:
+        parser.error("informe pelo menos um arquivo .log ou pasta")
 
     try:
         files = collect_logs(args.paths)

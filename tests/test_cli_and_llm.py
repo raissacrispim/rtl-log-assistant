@@ -5,7 +5,13 @@ from types import SimpleNamespace
 import pytest
 
 from rtl_log_assistant.cli import main
-from rtl_log_assistant.llm import DEFAULT_MODELS, SYSTEM_PROMPT, DiagnosisError, diagnose
+from rtl_log_assistant.llm import (
+    DEFAULT_MODELS,
+    SYSTEM_PROMPT,
+    DiagnosisError,
+    diagnose,
+    pick_gemini_model,
+)
 from rtl_log_assistant.parsers import parse_file
 from rtl_log_assistant.report import overall_status, render_markdown
 
@@ -133,7 +139,20 @@ class FakeGeminiClient:
             prompt_feedback=SimpleNamespace(block_reason=block_reason),
             candidates=[SimpleNamespace(finish_reason=types.FinishReason[finish])],
         )
-        self.models = SimpleNamespace(generate_content=self._generate)
+        self.models = SimpleNamespace(generate_content=self._generate, list=self._list)
+
+    @staticmethod
+    def _list():
+        def model(name, actions=("generateContent",)):
+            return SimpleNamespace(name=f"models/{name}", supported_actions=list(actions))
+
+        return [
+            model("gemini-3.6-flash"),
+            model("gemini-3.8-flash"),
+            model("gemini-3.8-flash-lite"),
+            model("gemini-3.9-flash-preview"),
+            model("text-embedding-005", ("embedContent",)),
+        ]
 
     def _generate(self, **kwargs):
         self.calls.append(kwargs)
@@ -149,7 +168,7 @@ def test_gemini_request_uses_same_prompt_and_digest():
 
     assert text == "## Status geral\nFalhou.\n"
     (call,) = client.calls
-    assert call["model"] == DEFAULT_MODELS["gemini"]
+    assert call["model"] == "gemini-3.8-flash"  # escolhido automaticamente
     assert call["config"].system_instruction == SYSTEM_PROMPT
     assert "FAIL: 2 de 514 verificacoes falharam" in call["contents"]
     assert "Checking Rule" not in call["contents"]
@@ -196,3 +215,34 @@ def test_cli_gemini_without_key(monkeypatch, capsys):
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     assert main([str(FIXTURES / "sim_fail.log"), "--ai", "--provider", "gemini"]) == 3
     assert "aistudio.google.com" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "names, expected",
+    [
+        (["gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.8-flash-001"], "gemini-3.8-flash"),
+        (["gemini-3.8-flash-lite", "gemini-3.6-flash"], "gemini-3.6-flash"),
+        (["gemini-3.9-flash-preview"], "gemini-3.9-flash-preview"),  # só sobrou preview
+        (["gemini-3.1-pro"], "gemini-3.1-pro"),  # nenhum Flash: usa o que houver
+    ],
+)
+def test_pick_gemini_model(names, expected):
+    assert pick_gemini_model(names) == expected
+
+
+def test_pick_gemini_model_empty():
+    with pytest.raises(DiagnosisError):
+        pick_gemini_model([])
+
+
+def test_cli_list_models(monkeypatch, capsys):
+    import rtl_log_assistant.cli as cli
+
+    monkeypatch.setattr(cli, "list_gemini_models", lambda: ["gemini-3.6-flash", "gemini-3.8-flash"])
+    assert main(["--list-models"]) == 0
+    assert capsys.readouterr().out.split() == ["gemini-3.6-flash", "gemini-3.8-flash"]
+
+
+def test_cli_requires_paths_without_list_models():
+    with pytest.raises(SystemExit):
+        main([])

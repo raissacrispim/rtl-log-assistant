@@ -8,6 +8,8 @@ O prompt é o mesmo para os dois provedores. Só muda a chamada à API.
 
 from __future__ import annotations
 
+import re
+
 from .parsers import LogDigest
 from .report import digests_to_json
 
@@ -15,8 +17,9 @@ PROVIDERS = ("claude", "gemini")
 DEFAULT_PROVIDER = "claude"
 DEFAULT_MODELS = {
     "claude": "claude-opus-5-5",
-    # Alias que aponta sempre para o Flash mais recente (disponível no plano gratuito).
-    "gemini": "gemini-flash-latest",
+    # Os nomes dos modelos Gemini mudam com frequência; sem --model, a ferramenta
+    # escolhe o Flash estável mais novo disponível para a chave (ver pick_gemini_model).
+    "gemini": "automático (Flash mais recente)",
 }
 DEFAULT_EFFORT = "medium"
 MAX_OUTPUT_TOKENS = 16000
@@ -70,10 +73,9 @@ def diagnose(
     """Gera o diagnóstico em Markdown. `client` permite injetar um cliente falso nos testes."""
     if provider not in PROVIDERS:
         raise ValueError(f"provedor desconhecido: {provider}")
-    model = model or DEFAULT_MODELS[provider]
     message = build_user_message(digests)
     if provider == "claude":
-        text, truncated = _diagnose_claude(message, model, effort, client)
+        text, truncated = _diagnose_claude(message, model or DEFAULT_MODELS["claude"], effort, client)
     else:
         text, truncated = _diagnose_gemini(message, model, client)
 
@@ -134,23 +136,63 @@ def _diagnose_claude(message: str, model: str, effort: str, client) -> tuple[str
 _GEMINI_BLOCKED = {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION"}
 
 
-def _diagnose_gemini(message: str, model: str, client) -> tuple[str, bool]:
+def gemini_client():
     try:
         from google import genai
-        from google.genai import errors, types
     except ImportError as e:
         raise DiagnosisError(
             'Pacote do Gemini não instalado. Rode: pip install -e ".[gemini]"'
         ) from e
+    try:
+        return genai.Client()  # lê GEMINI_API_KEY (ou GOOGLE_API_KEY)
+    except ValueError as e:
+        raise DiagnosisError(
+            "Nenhuma chave do Gemini encontrada. Defina GEMINI_API_KEY "
+            "(crie uma grátis em aistudio.google.com) ou rode sem --ai."
+        ) from e
 
-    if client is None:
-        try:
-            client = genai.Client()  # lê GEMINI_API_KEY (ou GOOGLE_API_KEY)
-        except ValueError as e:
-            raise DiagnosisError(
-                "Nenhuma chave do Gemini encontrada. Defina GEMINI_API_KEY "
-                "(crie uma grátis em aistudio.google.com) ou rode sem --ai."
-            ) from e
+
+def list_gemini_models(client=None) -> list[str]:
+    """Modelos que aceitam generateContent para esta chave."""
+    from google.genai import errors
+
+    client = client or gemini_client()
+    try:
+        models = list(client.models.list())
+    except errors.APIError as e:
+        raise DiagnosisError(f"Erro ao listar modelos do Gemini ({e.code}): {e.message}") from e
+    return sorted(
+        m.name.removeprefix("models/")
+        for m in models
+        if m.name and "generateContent" in (m.supported_actions or [])
+    )
+
+
+_NOT_GENERAL = ("lite", "image", "tts", "live", "audio", "embedding", "preview", "exp", "thinking")
+
+
+def pick_gemini_model(names: list[str]) -> str:
+    """Escolhe o Flash estável mais novo (ex.: gemini-3.8-flash)."""
+    flash = [n for n in names if "flash" in n]
+    stable = [n for n in flash if not any(tag in n for tag in _NOT_GENERAL)]
+    candidates = stable or flash or names
+    if not candidates:
+        raise DiagnosisError("Nenhum modelo do Gemini disponível para esta chave.")
+
+    def version(name: str) -> tuple:
+        # Só o primeiro número conta como versão ("gemini-3.8-flash-001" -> 3.8).
+        m = re.search(r"\d+(?:\.\d+)*", name)
+        nums = tuple(int(x) for x in m.group().split(".")) if m else ()
+        return (nums, -len(name))  # mais novo primeiro; empate: nome mais curto (sem sufixo)
+
+    return max(candidates, key=version)
+
+
+def _diagnose_gemini(message: str, model: str | None, client) -> tuple[str, bool]:
+    from google.genai import errors, types
+
+    client = client or gemini_client()
+    model = model or pick_gemini_model(list_gemini_models(client))
 
     try:
         response = client.models.generate_content(
@@ -162,7 +204,10 @@ def _diagnose_gemini(message: str, model: str, client) -> tuple[str, bool]:
             ),
         )
     except errors.APIError as e:
-        hint = " (limite do plano gratuito? espere um minuto)" if e.code == 429 else ""
+        hint = {
+            429: " (limite do plano gratuito? espere um minuto)",
+            404: " (veja os modelos disponíveis com --list-models)",
+        }.get(e.code, "")
         raise DiagnosisError(f"Erro da API do Gemini ({e.code}): {e.message}{hint}") from e
 
     feedback = response.prompt_feedback
