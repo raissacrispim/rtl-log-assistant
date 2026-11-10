@@ -92,7 +92,7 @@ def test_diagnose_sends_digest_not_raw_log():
     digests = [parse_file(p) for p in FIXTURES.glob("*.log")]
     text = diagnose(digests, client=client)
 
-    assert text == "## Status geral\nFalhou.\n"
+    assert text == f"## Status geral\nFalhou.\n\n_Diagnóstico gerado por `{DEFAULT_MODELS['claude']}`._\n"
     (call,) = client.calls
     assert call["model"] == DEFAULT_MODELS["claude"]
     assert call["fallbacks"] == "default"
@@ -129,11 +129,12 @@ def test_diagnose_without_credentials_gives_clear_error():
 class FakeGeminiClient:
     """Imita client.models.generate_content do SDK google-genai."""
 
-    def __init__(self, text="Tudo certo.", finish="STOP", block_reason=None, error=None):
+    def __init__(self, text="Tudo certo.", finish="STOP", block_reason=None, error=None, fail_models=()):
         from google.genai import types
 
         self.calls = []
         self._error = error
+        self._fail_models = dict(fail_models)  # modelo -> exceção
         self._response = SimpleNamespace(
             text=text,
             prompt_feedback=SimpleNamespace(block_reason=block_reason),
@@ -156,6 +157,8 @@ class FakeGeminiClient:
 
     def _generate(self, **kwargs):
         self.calls.append(kwargs)
+        if kwargs["model"] in self._fail_models:
+            raise self._fail_models[kwargs["model"]]
         if self._error:
             raise self._error
         return self._response
@@ -166,7 +169,7 @@ def test_gemini_request_uses_same_prompt_and_digest():
     digests = [parse_file(p) for p in FIXTURES.glob("*.log")]
     text = diagnose(digests, provider="gemini", client=client)
 
-    assert text == "## Status geral\nFalhou.\n"
+    assert text == "## Status geral\nFalhou.\n\n_Diagnóstico gerado por `gemini-3.8-flash`._\n"
     (call,) = client.calls
     assert call["model"] == "gemini-3.8-flash"  # escolhido automaticamente
     assert call["config"].system_instruction == SYSTEM_PROMPT
@@ -246,3 +249,41 @@ def test_cli_list_models(monkeypatch, capsys):
 def test_cli_requires_paths_without_list_models():
     with pytest.raises(SystemExit):
         main([])
+
+
+def _api_error(code, status):
+    from google.genai import errors
+
+    cls = errors.ServerError if code >= 500 else errors.ClientError
+    return cls(code, {"error": {"message": "x", "status": status}})
+
+
+def test_gemini_falls_back_to_next_model_when_overloaded(capsys):
+    client = FakeGeminiClient(fail_models={"gemini-3.8-flash": _api_error(503, "UNAVAILABLE")})
+    text = diagnose([parse_file(FIXTURES / "sim_fail.log")], provider="gemini", client=client)
+    assert [c["model"] for c in client.calls] == ["gemini-3.8-flash", "gemini-3.6-flash"]
+    assert "gerado por `gemini-3.6-flash`" in text
+    assert "tentando gemini-3.6-flash" in capsys.readouterr().err
+
+
+def test_gemini_explicit_model_does_not_fall_back():
+    client = FakeGeminiClient(fail_models={"gemini-3.8-flash": _api_error(503, "UNAVAILABLE")})
+    with pytest.raises(DiagnosisError, match="sobrecarregado"):
+        diagnose(
+            [parse_file(FIXTURES / "sim_fail.log")],
+            provider="gemini",
+            model="gemini-3.8-flash",
+            client=client,
+        )
+    assert len(client.calls) == 1
+
+
+def test_gemini_client_uses_v1beta_and_retries(monkeypatch):
+    from rtl_log_assistant.llm import gemini_client
+
+    monkeypatch.setenv("GEMINI_API_KEY", "chave-de-teste")
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    client = gemini_client()
+    opts = client._api_client._http_options
+    assert opts.api_version == "v1beta"
+    assert 503 in opts.retry_options.http_status_codes

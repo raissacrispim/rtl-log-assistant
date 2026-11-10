@@ -91,7 +91,9 @@ Opções:
 
 - `--model`: no Claude, o padrão é `claude-opus-5-5`. No Gemini, se você não
   informar, a ferramenta consulta os modelos liberados para a sua chave e usa o
-  Flash estável mais novo, porque os nomes mudam com frequência.
+  Flash estável mais novo, porque os nomes mudam com frequência. Se ele estiver
+  sobrecarregado (erro 503), tenta de novo e depois passa para o próximo Flash.
+  O relatório informa qual modelo gerou o diagnóstico.
 - `--list-models`: mostra os modelos do Gemini disponíveis para a sua chave.
 - `--effort`: `low`/`medium`/`high`/`xhigh`/`max`, padrão `medium`, só para Claude.
 
@@ -118,7 +120,7 @@ escritos no formato do VCS e do SpyGlass para testar os casos de falha.
 pytest -q
 ```
 
-São 46 testes. Eles cobrem os logs reais, os casos de falha, o relatório, a
+São 49 testes. Eles cobrem os logs reais, os casos de falha, o relatório, a
 CLI e a integração com Claude e Gemini, incluindo bloqueios, respostas
 cortadas, o limite do plano gratuito e a escolha automática do modelo. As chamadas às APIs são substituídas
 por clientes falsos, então os testes rodam sem chave e sem custo. O GitHub Actions roda tudo

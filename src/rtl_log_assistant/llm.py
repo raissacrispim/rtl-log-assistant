@@ -9,6 +9,7 @@ O prompt é o mesmo para os dois provedores. Só muda a chamada à API.
 from __future__ import annotations
 
 import re
+import sys
 
 from .parsers import LogDigest
 from .report import digests_to_json
@@ -75,16 +76,18 @@ def diagnose(
         raise ValueError(f"provedor desconhecido: {provider}")
     message = build_user_message(digests)
     if provider == "claude":
-        text, truncated = _diagnose_claude(message, model or DEFAULT_MODELS["claude"], effort, client)
+        text, truncated, used = _diagnose_claude(
+            message, model or DEFAULT_MODELS["claude"], effort, client
+        )
     else:
-        text, truncated = _diagnose_gemini(message, model, client)
+        text, truncated, used = _diagnose_gemini(message, model, client)
 
     text = (text or "").strip()
     if not text:
         raise DiagnosisError("O modelo não retornou texto.")
     if truncated:
         text += "\n\n_(Resposta interrompida pelo limite de tokens.)_"
-    return text + "\n"
+    return f"{text}\n\n_Diagnóstico gerado por `{used}`._\n"
 
 
 # --------------------------------------------------------------------------- #
@@ -92,7 +95,7 @@ def diagnose(
 # --------------------------------------------------------------------------- #
 
 
-def _diagnose_claude(message: str, model: str, effort: str, client) -> tuple[str, bool]:
+def _diagnose_claude(message: str, model: str, effort: str, client) -> tuple[str, bool, str]:
     import anthropic
 
     client = client or anthropic.Anthropic()
@@ -126,7 +129,7 @@ def _diagnose_claude(message: str, model: str, effort: str, client) -> tuple[str
     if response.stop_reason == "refusal":
         raise DiagnosisError("O modelo recusou gerar o diagnóstico para esses logs.")
     text = "".join(block.text for block in response.content if block.type == "text")
-    return text, response.stop_reason == "max_tokens"
+    return text, response.stop_reason == "max_tokens", getattr(response, "model", model)
 
 
 # --------------------------------------------------------------------------- #
@@ -136,15 +139,32 @@ def _diagnose_claude(message: str, model: str, effort: str, client) -> tuple[str
 _GEMINI_BLOCKED = {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION"}
 
 
+# Versão da API: a "v1" não aceita instruções de sistema em alguns modelos.
+GEMINI_API_VERSION = "v1beta"
+# Erros temporários do servidor (ex.: 503 "high demand") são repetidos pelo SDK.
+GEMINI_RETRY_STATUS = [500, 503]
+# Quantos modelos tentar, em ordem, quando o modelo é escolhido automaticamente.
+GEMINI_MAX_FALLBACKS = 3
+
+
 def gemini_client():
     try:
         from google import genai
+        from google.genai import types
     except ImportError as e:
         raise DiagnosisError(
             'Pacote do Gemini não instalado. Rode: pip install -e ".[gemini]"'
         ) from e
     try:
-        return genai.Client()  # lê GEMINI_API_KEY (ou GOOGLE_API_KEY)
+        # Lê GEMINI_API_KEY (ou GOOGLE_API_KEY).
+        return genai.Client(
+            http_options=types.HttpOptions(
+                api_version=GEMINI_API_VERSION,
+                retry_options=types.HttpRetryOptions(
+                    attempts=3, initial_delay=2.0, http_status_codes=GEMINI_RETRY_STATUS
+                ),
+            )
+        )
     except ValueError as e:
         raise DiagnosisError(
             "Nenhuma chave do Gemini encontrada. Defina GEMINI_API_KEY "
@@ -171,8 +191,8 @@ def list_gemini_models(client=None) -> list[str]:
 _NOT_GENERAL = ("lite", "image", "tts", "live", "audio", "embedding", "preview", "exp", "thinking")
 
 
-def pick_gemini_model(names: list[str]) -> str:
-    """Escolhe o Flash estável mais novo (ex.: gemini-3.8-flash)."""
+def gemini_candidates(names: list[str]) -> list[str]:
+    """Modelos em ordem de preferência: Flash estáveis do mais novo ao mais antigo."""
     flash = [n for n in names if "flash" in n]
     stable = [n for n in flash if not any(tag in n for tag in _NOT_GENERAL)]
     candidates = stable or flash or names
@@ -185,30 +205,43 @@ def pick_gemini_model(names: list[str]) -> str:
         nums = tuple(int(x) for x in m.group().split(".")) if m else ()
         return (nums, -len(name))  # mais novo primeiro; empate: nome mais curto (sem sufixo)
 
-    return max(candidates, key=version)
+    return sorted(candidates, key=version, reverse=True)
 
 
-def _diagnose_gemini(message: str, model: str | None, client) -> tuple[str, bool]:
+def pick_gemini_model(names: list[str]) -> str:
+    """Escolhe o Flash estável mais novo (ex.: gemini-3.8-flash)."""
+    return gemini_candidates(names)[0]
+
+
+def _diagnose_gemini(message: str, model: str | None, client) -> tuple[str, bool, str]:
     from google.genai import errors, types
 
     client = client or gemini_client()
-    model = model or pick_gemini_model(list_gemini_models(client))
+    if model:
+        models = [model]
+    else:
+        models = gemini_candidates(list_gemini_models(client))[:GEMINI_MAX_FALLBACKS]
 
-    try:
-        response = client.models.generate_content(
-            model=model,
-            contents=message,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                max_output_tokens=MAX_OUTPUT_TOKENS,
-            ),
-        )
-    except errors.APIError as e:
-        hint = {
-            429: " (limite do plano gratuito? espere um minuto)",
-            404: " (veja os modelos disponíveis com --list-models)",
-        }.get(e.code, "")
-        raise DiagnosisError(f"Erro da API do Gemini ({e.code}): {e.message}{hint}") from e
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+    )
+    for i, name in enumerate(models):
+        try:
+            response = client.models.generate_content(model=name, contents=message, config=config)
+            break
+        except errors.APIError as e:
+            # Modelo sobrecarregado ou indisponível: tenta o próximo da lista.
+            if e.code in (404, 503) and i + 1 < len(models):
+                print(f"aviso: {name} indisponível ({e.code}); tentando {models[i + 1]}...",
+                      file=sys.stderr)
+                continue
+            hint = {
+                429: " (limite do plano gratuito? espere um minuto)",
+                404: " (veja os modelos disponíveis com --list-models)",
+                503: " (servidor sobrecarregado; tente de novo em alguns minutos ou use --model)",
+            }.get(e.code, "")
+            raise DiagnosisError(f"Erro da API do Gemini ({e.code}): {e.message}{hint}") from e
 
     feedback = response.prompt_feedback
     if feedback is not None and feedback.block_reason:
@@ -216,7 +249,7 @@ def _diagnose_gemini(message: str, model: str | None, client) -> tuple[str, bool
     finish = _finish_reason(response)
     if finish in _GEMINI_BLOCKED:
         raise DiagnosisError(f"O Gemini interrompeu a resposta: {finish}")
-    return response.text or "", finish == "MAX_TOKENS"
+    return response.text or "", finish == "MAX_TOKENS", name
 
 
 def _finish_reason(response) -> str | None:
